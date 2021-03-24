@@ -152,10 +152,11 @@ func resolve() (Graph, error) {
 			out := ""
 			for name := range dependencies {
 				g = append(g, nodeSet[name])
-				out = out + "\n" + name + ":\n"
+				out = out + name + ":\n"
 				for _, d := range nodeSet[name].deps {
 					out = out + d + ","
 				}
+				out = out + "\n"
 			}
 			err := ioutil.WriteFile("circle.txt", []byte(out), 0644)
 		    if err != nil {
