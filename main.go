@@ -183,12 +183,10 @@ func resolve() (Graph, error) {
 }
 
 func main() {
-	caseid = flag.String("caseid", "", "caseid")
-
+	caseid = flag.String("caseid", "(select top 1 id from cases order by id desc)", "caseid")
+	
 	flag.Parse()
 
-	fmt.Println("Caseid:", *caseid)
-	
 	connstring := "server=localhost;user id=;trusted_connection=true;database=mb4;"
 
 	var err error
@@ -203,12 +201,35 @@ func main() {
 	defer db.Close()
 
 	res, err := db.Query(
+		`select c.id, a.name, m.name from cases c
+		inner join analyses a on a.sfid = c.analysissfid
+		inner join models m on m.sfid = a.modelsfid
+		where c.id = ` + *caseid)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer res.Close()
+
+	var analysis, model string
+
+	fmt.Println("Caseid:", *caseid)
+	
+	for res.Next() {
+		err := res.Scan(&caseid, &analysis, &model)
+		fmt.Printf("Model: %s, Analysis: %s\n", model, analysis)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	res, err = db.Query(
 		`select o.sfname, a.afreference, a.settings, a.settingsorigin
 		from attrsettings a
 		inner join objects o on o.sfid = a.afelement and o.modelsfid like 'f%' and o.createcaseid <= @p1 and (o.deletecaseid is null or o.deletecaseid > @p1)
 		where a.isdeleted = 0 and a.afattribute = 'MeasuredMass' order by o.sfname`, *caseid)
 	if err != nil {
-		log.Fatal(err)	
+		log.Fatal(err)
 	}
 
 	fmt.Println("Initial data loaded. Parsing...")
