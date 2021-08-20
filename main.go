@@ -28,11 +28,11 @@ func New_Node(name string, deps ...string) *Node {
 type Graph []*Node
 
 var graph Graph
-var caseid *string
+var caseid, measured *string
 var db *sql.DB
 
 func handle_formula(sfname *string, settings *string) {
-	rf := regexp.MustCompile(`[A-Z]=\.*\\*([\s\p{L}\w\/\+\-]+)[\\|\|]MeasuredMass;`)
+	rf := regexp.MustCompile(`[A-Z]=\.*\\*([\s\p{L}\w\/\+\-]+)[\\|\|]`+*measured+`;`)
 	depr := rf.FindAllStringSubmatch(*settings, -1)
 	var deps []string
 	for _, sm := range depr {
@@ -184,6 +184,7 @@ func resolve() (Graph, error) {
 
 func main() {
 	caseid = flag.String("caseid", "(select top 1 id from cases order by id desc)", "caseid")
+	measured = flag.String("measured", "MeasuredMass", "measured")
 	
 	flag.Parse()
 
@@ -223,11 +224,11 @@ func main() {
 		}
 	}
 
-	res, err = db.Query(
-		`select o.sfname, a.afreference, a.settings, a.settingsorigin
+	res, err = db.Query(fmt.Sprintf(`select o.sfname, a.afreference, a.settings, a.settingsorigin
 		from attrsettings a
-		inner join objects o on o.sfid = a.afelement and o.modelsfid like 'f%' and o.createcaseid <= @p1 and (o.deletecaseid is null or o.deletecaseid > @p1)
-		where a.isdeleted = 0 and a.afattribute = 'MeasuredMass' order by o.sfname`, *caseid)
+		inner join objects o on o.sfid = a.afelement and o.createcaseid <= %s and (o.deletecaseid is null or o.deletecaseid > %s)
+		inner join models m on m.sfid = o.modelsfid and m.name = '%s'
+		where a.isdeleted = 0 and a.afattribute = '%s' order by o.sfname`, *caseid, *caseid, model, *measured))
 	if err != nil {
 		log.Fatal(err)
 	}
