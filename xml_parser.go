@@ -16,12 +16,13 @@ type DataMap struct {
 type Table struct {
 	XMLName xml.Name 	`xml:"Table"`
 	DBName string		`xml:"dbTableName,attr"`
+	AttrName string		`xml:"dsTableName,attr"`
 	Templates []Template	`xml:"Template"`
 }
 
 type Template struct {
 	XMLName xml.Name	`xml:"Template"`
-	Name string			`xml:"Name,attr"`
+	Name string			`xml:"name,attr"`
 	Attributes []Attribute	`xml:"Attribute"`
 }
 
@@ -37,11 +38,11 @@ type Af struct {
 }
 
 type XMLParser struct {
-	Tables []string
+	Templates []string
 }
 
 type AttributesMap struct {
-	TableName string
+	TemplateName string
 	Attributes []string
 }
 
@@ -79,15 +80,16 @@ func (xp *XMLParser) Parse(filename string, analyse string) []AttributesMap {
 					}	
 				}
 			}
+			if len(attrs) > 0 {
+				var am AttributesMap
+				xp.Templates = append(xp.Templates, d.Tables[i].Templates[j].Name)
+				am.TemplateName = d.Tables[i].Templates[j].Name
+				am.Attributes = attrs
+				output = append(output, am)
+			}
 		}
-		if len(attrs) > 0 {
-			var am AttributesMap
-			xp.Tables = append(xp.Tables, d.Tables[i].DBName)
-			am.TableName = d.Tables[i].DBName
-			am.Attributes = attrs
-			output = append(output, am)
-		}
+		
 	}
-	fmt.Printf("Loaded %d templates\n", len(xp.Tables))
+	fmt.Printf("Loaded %d templates\n", len(xp.Templates))
 	return output
 }

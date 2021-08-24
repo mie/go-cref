@@ -14,7 +14,7 @@ type Node struct {
 
 type Graph []*Node
 
-func display(gr Graph) string {
+func (gr Graph) display() string {
 	var out string
 	for _, node := range gr {
 		for _, dep := range node.deps {
@@ -24,15 +24,7 @@ func display(gr Graph) string {
 	return out
 }
 
-func New_Node(name string, deps ...string) *Node {
-	n := &Node {
-		name: name,
-		deps: deps,
-	}
-	return n
-}
-
-func (gr *Graph) insert(name string, deps ...string) {
+func insert(gr *Graph, name string, deps ...string) {
 	n := &Node {
 		name: name,
 		deps: deps,
@@ -40,7 +32,7 @@ func (gr *Graph) insert(name string, deps ...string) {
 	*gr = append(*gr, n)
 }
 
-func resolve(gr Graph) (Graph, error) {
+func (gr Graph) resolve() (Graph, error) {
 	nodeSet := make(map[string] *Node)
 	dependencies := make(map[string] mapset.Set)
 	fmt.Println("Populating dataset...")
