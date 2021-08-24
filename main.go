@@ -28,7 +28,7 @@ func New_Node(name string, deps ...string) *Node {
 type Graph []*Node
 
 var graph Graph
-var caseid, measured *string
+var caseid, measured, dbname *string
 var db *sql.DB
 
 func handle_formula(sfname *string, settings *string) {
@@ -184,11 +184,12 @@ func resolve() (Graph, error) {
 
 func main() {
 	caseid = flag.String("caseid", "(select top 1 id from cases order by id desc)", "caseid")
+	dbname = flag.String("db", "mb4", "db")
 	measured = flag.String("measured", "MeasuredMass", "measured")
 	
 	flag.Parse()
 
-	connstring := "server=localhost;user id=;trusted_connection=true;database=mb4;"
+	connstring := "server=localhost;user id=;trusted_connection=true;database=" + *dbname + ";"
 
 	var err error
 
