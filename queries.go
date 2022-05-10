@@ -12,16 +12,25 @@ func GetCaseQuery (caseid *string) string {
 	where c.id = ` + *caseid
 }
 
-func GetFormulasQuery (caseid *string, attrs []string, template string, model string) string {
+func GetFormulasQuery (caseid *string, attrs *[]string, template *string, model *string) string {
 	return fmt.Sprintf(`select o.sfname, a.afattribute, a.afreference, a.settingsorigin from templates t 
 	inner join cases c on 1=1 and c.id = %s
 	inner join objects o on o.templatesfid = t.sfid and o.createcaseid <= c.id and (o.deletecaseid is null or o.deletecaseid > c.id)
 	inner join models m on m.sfid = o.modelsfid
 	inner join attrsettings a on a.afelement = o.sfid and a.isdeleted = 0 and a.afattribute in ('%s')
-	where t.name = '%s' and m.name = '%s'`, *caseid, strings.Join(attrs, "','"), template, model)
+	where t.name = '%s' and m.name = '%s'`, *caseid, strings.Join(*attrs, "','"), *template, *model)
 }
 
-func GetTankMassQuery (caseid *string, measured *string, attribute string, objectid string, model string) string {
+func GetTankMassQuery (caseid *string, measured *string, attribute *string, objectid *string, model *string) string {
+	fmt.Println(`%s`, *measured);
+	fmt.Println(`select o.sfname, '%s', cast(m.sfname as nvarchar(255)) + '|%s' s from objects o
+	inner join models md on md.sfid = o.modelsfid
+	inner join links l on l.destid = o.id or l.sourceid = o.id
+	inner join objects ol on ol.id = l.id and ol.createcaseid <= c.id and (ol.deletecaseid is null or ol.deletecaseid > c.id)
+	inner join flowsmeters fm on fm.flowid = l.flowid
+	inner join objects ofm on ofm.id = fm.id and ofm.createcaseid <= c.id and (ofm.deletecaseid is null or ofm.deletecaseid > c.id)
+	inner join objects m on m.id = fm.meterid
+	where o.sfname = '%s' and md.name = '%s'`, *attribute, *measured, *caseid, *objectid, *model);
 	return fmt.Sprintf(`select o.sfname, '%s', cast(m.sfname as nvarchar(255)) + '|%s' s from objects o
 	inner join models md on md.sfid = o.modelsfid
 	inner join links l on l.destid = o.id or l.sourceid = o.id
@@ -29,10 +38,10 @@ func GetTankMassQuery (caseid *string, measured *string, attribute string, objec
 	inner join flowsmeters fm on fm.flowid = l.flowid
 	inner join objects ofm on ofm.id = fm.id and ofm.createcaseid <= c.id and (ofm.deletecaseid is null or ofm.deletecaseid > c.id)
 	inner join objects m on m.id = fm.meterid
-	where o.sfname = '%s' and md.name = '%s'`, attribute, *measured, *caseid, objectid, model)
+	where o.sfname = '%s' and md.name = '%s'`, *attribute, *measured, *caseid, *objectid, *model)
 }
 
-func GetTheRestQuery (caseid *string, attrs []string, template string, model string) string {
+func GetTheRestQuery (caseid *string, attrs *[]string, template *string, model *string) string {
 	return fmt.Sprintf(`select cast(o.sfname as nvarchar(255)) + '|' + a.afattribute attr from templates t
 	inner join cases c on 1=1 and c.id = %s
 	inner join objects o on o.templatesfid = t.sfid and o.createcaseid <= c.id and (o.deletecaseid is null or o.deletecaseid > c.id)
@@ -42,7 +51,7 @@ func GetTheRestQuery (caseid *string, attrs []string, template string, model str
 			(a.afattribute in ('%s') and not a.afreference in ('Formula','Smart Sum of Transfers','Sum of Transfers','Tank Mass')) or
 			not a.afattribute in ('%s')
 		)
-	where t.name = '%s' and m.name = '%s'`, *caseid, strings.Join(attrs, "','"), strings.Join(attrs, "','"), template, model)
+	where t.name = '%s' and m.name = '%s'`, *caseid, strings.Join(*attrs, "','"), strings.Join(*attrs, "','"), *template, *model)
 }
 
 func GetSmartSTQuery (caseid *string) string {

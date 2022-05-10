@@ -5,6 +5,7 @@ import (
 	"github.com/deckarep/golang-set"
 	"io/ioutil"
 	"errors"
+	"strings"
 )
 
 type Node struct {
@@ -15,13 +16,17 @@ type Node struct {
 type Graph []*Node
 
 func (gr Graph) display() string {
-	var out string
+	var out strings.Builder
 	for _, node := range gr {
-		for _, dep := range node.deps {
-			out = out + fmt.Sprintf("%s -> %s\n", node.name, dep)
+		if len(node.deps) == 0 {
+			out.WriteString(fmt.Sprintf("%s -> \n", node.name))
+		} else {
+			for _, dep := range node.deps {
+				out.WriteString(fmt.Sprintf("%s -> %s\n", node.name, dep))
+			}
 		}
 	}
-	return out
+	return out.String()
 }
 
 func insert(gr *Graph, name string, deps ...string) {
@@ -51,7 +56,7 @@ func (gr Graph) resolve() (Graph, error) {
 	for len(dependencies) != 0 {
 		i += 1
 		fmt.Println("Pass", i)
-		// Get all nodes from the graph which have no dependencies
+		
 		readySet := mapset.NewSet()
 		for name, deps := range dependencies {
 			if deps.Cardinality() == 0 {
@@ -60,33 +65,29 @@ func (gr Graph) resolve() (Graph, error) {
 		}
 		fmt.Println(readySet.Cardinality())
 
-		// If there aren't any ready nodes, then we have a cicular dependency
 		if readySet.Cardinality() == 0 {
 			var g Graph
-			out := ""
+			var out strings.Builder
 			for name := range dependencies {
 				g = append(g, nodeSet[name])
-				out = out + name + ":\n"
+				out.WriteString(name + ":\n")
 				for _, d := range nodeSet[name].deps {
-					out = out + d + ","
+					out.WriteString(d + ",")
 				}
-				out = out + "\n"
+				out.WriteString("\n")
 			}
-			err := ioutil.WriteFile("circle.txt", []byte(out), 0644)
+			err := ioutil.WriteFile("circle.txt", []byte(out.String()), 0644)
 		    if err != nil {
 		        panic(err)
 		    }
 			return g, errors.New("Circular dependency found")
 		}
 
-		// Remove the ready nodes and add them to the resolved graph
 		for name := range readySet.Iter() {
 			delete(dependencies, name.(string))
 			resolved = append(resolved, nodeSet[name.(string)])
 		}
 
-		// Also make sure to remove the ready nodes from the
-		// remaining node dependencies as well
 		for name, deps := range dependencies {
 			diff := deps.Difference(readySet)
 			dependencies[name] = diff

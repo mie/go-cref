@@ -9,7 +9,6 @@ import (
 	"strings"
 	"database/sql"
 	_ "github.com/denisenkom/go-mssqldb"
-
 )
 
 type smart_sum struct {
@@ -50,10 +49,7 @@ func main() {
 	defer db.Close()
 
 	res, err := db.Query(
-		`select c.id, a.name, m.name from cases c
-		inner join analyses a on a.sfid = c.analysissfid
-		inner join models m on m.sfid = a.modelsfid
-		where c.id = ` + *caseid)
+		GetCaseQuery(caseid))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -79,20 +75,17 @@ func main() {
 
 	var queries []string
 	var deps []string
+	var smartsum []smart_sum
+	var simplesum []smart_sum
+	var tankmass []smart_sum
 
-	var obj, settings, attribute string
+	var obj, settings, attribute, reference string
 
 	var graph Graph
-	// graph = new(Graph)
 
 	// Formulas
 	for _, a := range attrs {
-		q := fmt.Sprintf(`select cast(o.sfname as nvarchar(255)) + '|' + a.afattribute, a.settingsorigin from templates t 
-			inner join cases c on 1=1 and c.id = %s
-			inner join objects o on o.templatesfid = t.sfid and o.createcaseid <= c.id and (o.deletecaseid is null or o.deletecaseid > c.id)
-			inner join models m on m.sfid = o.modelsfid
-			inner join attrsettings a on a.afelement = o.sfid and a.isdeleted = 0 and a.afattribute in ('%s')
-			where t.name = '%s' and a.afreference = 'Formula' and m.name = '%s'`, *caseid, strings.Join(a.Attributes[:], "','"), a.TemplateName, model)
+		q := GetFormulasQuery(caseid, &a.Attributes, &a.TemplateName, &model)
 		queries = append(queries, q)
 	}
 
@@ -102,91 +95,60 @@ func main() {
 	}
 	
 	for res.Next() {
-		err := res.Scan(&obj, &settings)
+		err := res.Scan(&obj, &attribute, &reference, &settings)
 		if err != nil {
 			log.Fatal(err)
 		}
-		rf := regexp.MustCompile(`[A-Z]=\.?\.?\\([^\|^\\]+)[\\|\|]([^;]+);`)
-		
-		depr := rf.FindAllStringSubmatch(settings, -1)
-		deps = nil
-		for _, sm := range depr {
-			deps = append(deps, sm[1] + "|" + sm[2])
+		if reference == "Formula" {
+
+			rf := regexp.MustCompile(`[A-Z]=\.?\.?\\?([^\|^\\^;]*)[\\|\|]*([^;]*);`)
+			
+			depr := rf.FindAllStringSubmatch(settings, -1)
+			deps = nil
+			for _, sm := range depr {
+				if sm[2] == "" {
+					deps = append(deps, obj + "|" + sm[1])
+				} else {
+					deps = append(deps, sm[1] + "|" + sm[2])
+				}
+			}
+			insert(&graph, obj + "|" + attribute, deps...)
+		} else if reference == "Smart Sum of Transfers" {
+			rf := regexp.MustCompile(`\:(\d+)[,|\}]?`)
+			depr := rf.FindAllStringSubmatch(settings, -1)
+			for _, sm := range depr {
+				smartsum = append(smartsum, smart_sum{objectid: obj, attribute: attribute, nodeid: sm[1]})
+			}
+		} else if reference == "Sum of Transfers" {
+			rf := regexp.MustCompile(`(\d+)\\(True|False)\\`)
+			depr := rf.FindAllStringSubmatch(settings, -1)
+			for _, sm := range depr {
+				if sm[2] == "True" {
+					simplesum = append(simplesum, smart_sum{objectid: obj, attribute: attribute, nodeid: sm[1], input: true})
+				} else {
+					simplesum = append(simplesum, smart_sum{objectid: obj, attribute: attribute, nodeid: sm[1], input: false})
+				}
+				
+			}
+		} else if reference == "Tank Mass" {
+			tankmass = append(tankmass, smart_sum{objectid: obj, attribute: attribute, nodeid: obj})
+		} else {
+			insert(&graph, obj + "|" + attribute)
 		}
-		insert(&graph, obj, deps...)
 	}
 
 	fmt.Println("Collected: formulas", len(graph))
 
-	queries = nil
-
 	// Smart Sum of Transfers
 
-	for _, a := range attrs {
-		q := fmt.Sprintf(`select o.sfname, a.afattribute, a.settings from templates t
-		inner join cases c on 1=1 and c.id = %s
-		inner join objects o on o.templatesfid = t.sfid and o.createcaseid <= c.id and (o.deletecaseid is null or o.deletecaseid > c.id)
-		inner join models m on m.sfid = o.modelsfid
-		inner join attrsettings a on a.afelement = o.sfid and a.isdeleted = 0 and a.afattribute in ('%s')
-		where t.name = '%s' and a.afreference = 'Smart Sum of Transfers' and m.name = '%s'`, *caseid, strings.Join(a.Attributes[:], "','"), a.TemplateName, model)
-		queries = append(queries, q)
-	}
-
-	res, err = db.Query(strings.Join(queries[:], " union all "))
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	var nodes []smart_sum
-
-	for res.Next() {
-		err := res.Scan(&obj, &attribute, &settings)
-		
-		if err != nil {
-			log.Fatal(err)
-		}
-		rf := regexp.MustCompile(`\:(\d+)[,|\}]?`)
-		depr := rf.FindAllStringSubmatch(settings, -1)
-		for _, sm := range depr {
-			nodes = append(nodes, smart_sum{objectid: obj, attribute: attribute, nodeid: sm[1]})
-		}
-	}
-
 	queries = nil
 
-	for _, ss := range nodes {
+	for _, ss := range smartsum {
 		q := fmt.Sprintf("insert into #checker_table values ('%s', '%s', %s)", ss.objectid, ss.attribute, ss.nodeid)
 		queries = append(queries, q)
 	}
 	
-	res, err = db.Query("create table #checker_table (metername nvarchar(255), attribute nvarchar(255),nodeid int); " + strings.Join(queries[:], "\n") + fmt.Sprintf(`
-		create table #checker_table2 (meterid int, attribute nvarchar(255), metername nvarchar(255), sfname nvarchar(255))
-		insert into #checker_table2
-		select distinct * from (
-		select distinct m.id meterid, t.attribute, t.metername, meters.sfname from links l
-		inner join cases c on 1=1 and c.id = %s
-		inner join objects o on o.id = l.id and o.createcaseid <= c.id and (o.deletecaseid is null or o.deletecaseid > c.id)
-		inner join flowsmeters fm on fm.flowid = l.flowid
-		inner join objects ofm on ofm.id = fm.id and ofm.createcaseid <= c.id and (ofm.deletecaseid is null or ofm.deletecaseid > c.id)
-		inner join objects m on m.id = fm.meterid
-		inner join #checker_table t on (t.nodeid = l.sourceid or t.nodeid = l.destid)
-		left join objects meters on meters.sfname != t.metername and meters.id = m.id
-		union all
-		select distinct m.id, t.attribute, t.metername, meters.sfname from ports p
-		inner join cases c on 1=1 and c.id = %s
-		inner join objects o on o.id = p.id and o.createcaseid <= c.id and (o.deletecaseid is null or o.deletecaseid > c.id)
-		inner join flowsmeters fm on fm.flowid = p.flowid
-		inner join objects ofm on ofm.id = fm.id and ofm.createcaseid <= c.id and (ofm.deletecaseid is null or ofm.deletecaseid > c.id)
-		inner join objects m on m.id = fm.meterid
-		inner join #checker_table t on t.nodeid = p.unitid
-		left join objects meters on meters.sfname != t.metername and meters.id = m.id) data
-		select c1.metername, c1.attribute, isnull(c1.sfname, '') from #checker_table2 c1
-		inner join (
-			select metername, count(*) c from #checker_table2 group by metername
-		) counts on counts.metername = c1.metername
-		where (counts.c > 1 and c1.sfname is not null) or counts.c = 1
-		order by c1.metername, c1.attribute
-		drop table #checker_table; drop table #checker_table2`, *caseid, *caseid))
+	res, err = db.Query("create table #checker_table (metername nvarchar(255), attribute nvarchar(255),nodeid int); " + strings.Join(queries[:], "\n") + GetSmartSTQuery(caseid))
 
 	if err != nil {
 		log.Fatal(err)
@@ -233,49 +195,11 @@ func main() {
 
 	fmt.Println("Collected: smart sum of transfers")
 
-	queries = nil
-
 	// Sum of Transfers
 
-	for _, a := range attrs {
-		q := fmt.Sprintf(`select o.sfname, a.afattribute, a.settings from templates t
-		inner join cases c on 1=1 and c.id = %s
-		inner join objects o on o.templatesfid = t.sfid and o.createcaseid <= c.id and (o.deletecaseid is null or o.deletecaseid > c.id)
-		inner join models m on m.sfid = o.modelsfid
-		inner join attrsettings a on a.afelement = o.sfid and a.isdeleted = 0 and a.afattribute in ('%s')
-		where t.name = '%s' and a.afreference = 'Sum of Transfers' and m.name = '%s'`, *caseid, strings.Join(a.Attributes[:], "','"), a.TemplateName, model)
-		queries = append(queries, q)
-	}
-
-	res, err = db.Query(strings.Join(queries[:], " union all "))
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	nodes = nil
-	
-
-	for res.Next() {
-		err := res.Scan(&obj, &attribute, &settings)
-		
-		if err != nil {
-			log.Fatal(err)
-		}
-		rf := regexp.MustCompile(`(\d+)\\(True|False)\\`)
-		depr := rf.FindAllStringSubmatch(settings, -1)
-		for _, sm := range depr {
-			if sm[2] == "True" {
-				nodes = append(nodes, smart_sum{objectid: obj, attribute: attribute, nodeid: sm[1], input: true})
-			} else {
-				nodes = append(nodes, smart_sum{objectid: obj, attribute: attribute, nodeid: sm[1], input: false})
-			}
-			
-		}
-	}
-
 	queries = nil
 
-	for _, ss := range nodes {
+	for _, ss := range simplesum {
 		var q string
 		if ss.input == true {
 			q = fmt.Sprintf("insert into #checker_table values ('%s', '%s', %s, 1)", ss.objectid, ss.attribute, ss.nodeid)
@@ -286,35 +210,7 @@ func main() {
 	}
 
 	
-	res, err = db.Query("create table #checker_table (metername nvarchar(255), attribute nvarchar(255),nodeid int, isinput bit); " + strings.Join(queries[:], "\n") + fmt.Sprintf(`
-		create table #checker_table2 (meterid int, attribute nvarchar(255), metername nvarchar(255), sfname nvarchar(255))
-		insert into #checker_table2
-		select distinct * from (
-		select distinct m.id meterid, t.attribute, t.metername, meters.sfname from links l
-		inner join cases c on 1=1 and c.id = %s
-		inner join objects o on o.id = l.id and o.createcaseid <= c.id and (o.deletecaseid is null or o.deletecaseid > c.id)
-		inner join flowsmeters fm on fm.flowid = l.flowid
-		inner join objects ofm on ofm.id = fm.id and ofm.createcaseid <= c.id and (ofm.deletecaseid is null or ofm.deletecaseid > c.id)
-		inner join objects m on m.id = fm.meterid
-		inner join #checker_table t on (t.nodeid = l.sourceid and t.isinput = 0) or (t.nodeid = l.destid and t.isinput = 1)
-		left join objects meters on meters.id = m.id
-		union all
-		select distinct m.id, t.attribute, t.metername, meters.sfname from ports p
-		inner join cases c on 1=1 and c.id = %s
-		inner join objects o on o.id = p.id and o.createcaseid <= c.id and (o.deletecaseid is null or o.deletecaseid > c.id)
-		inner join flowsmeters fm on fm.flowid = p.flowid
-		inner join objects ofm on ofm.id = fm.id and ofm.createcaseid <= c.id and (ofm.deletecaseid is null or ofm.deletecaseid > c.id)
-		inner join objects m on m.id = fm.meterid
-		inner join #checker_table t on (t.nodeid = p.unitid or t.nodeid = p.connectionobjid) and p.isinput = t.isinput
-		left join objects meters on meters.id = m.id) data
-		select c1.metername, c1.attribute, isnull(c1.sfname,'') from #checker_table2 c1
-		inner join (
-			select metername, count(*) c from #checker_table2 group by metername
-		) counts on counts.metername = c1.metername
-		where (counts.c > 1 and c1.sfname is not null) or counts.c = 1
-		order by c1.metername, c1.attribute
-		drop table #checker_table; drop table #checker_table2
-		`, *caseid, *caseid))
+	res, err = db.Query("create table #checker_table (metername nvarchar(255), attribute nvarchar(255),nodeid int, isinput bit); " + strings.Join(queries[:], "\n") + GetSTQuery(caseid))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -363,52 +259,46 @@ func main() {
 
 	queries = nil
 
-	for _, a := range attrs {
-		q := fmt.Sprintf(`select o.sfname, a.afattribute, cast(m.sfname as nvarchar(255)) + '|%s' s from templates t
-		inner join cases c on 1=1 and c.id = %s
-		inner join objects o on o.templatesfid = t.sfid and o.createcaseid <= c.id and (o.deletecaseid is null or o.deletecaseid > c.id)
-		inner join models md on md.sfid = o.modelsfid
-		inner join attrsettings a on a.afelement = o.sfid and a.isdeleted = 0 and a.afattribute in ('%s')
-		inner join links l on l.destid = o.id or l.sourceid = o.id
-		inner join objects ol on ol.id = l.id and ol.createcaseid <= c.id and (ol.deletecaseid is null or ol.deletecaseid > c.id)
-		inner join flowsmeters fm on fm.flowid = l.flowid
-		inner join objects ofm on ofm.id = fm.id and ofm.createcaseid <= c.id and (ofm.deletecaseid is null or ofm.deletecaseid > c.id)
-		inner join objects m on m.id = fm.meterid
-		where t.name = '%s' and a.afreference = 'Tank Mass' and md.name = '%s'`, *measured, *caseid, strings.Join(a.Attributes[:], "','"), a.TemplateName, model)
+	for _, a := range tankmass {
+		q := GetTankMassQuery(caseid, measured, &a.attribute, &a.objectid, &model)
 		queries = append(queries, q)
 	}
+	if (queries != nil) {
+		fmt.Println("select * from (" + strings.Join(queries[:], " union all ") + ") data order by sfname, afattribute");
 	
-	res, err = db.Query("select * from (" + strings.Join(queries[:], " union all ") + ") data order by sfname, afattribute")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	deps = nil
-	first_pass = true
-
-	notLast = res.Next()
-
-	for notLast {
-		err := res.Scan(&obj, &attribute, &settings)
+		res, err = db.Query("select * from (" + strings.Join(queries[:], " union all ") + ") data order by sfname, afattribute")
 		if err != nil {
 			log.Fatal(err)
 		}
-		if first_pass {
-			prev = obj
-			first_pass = false
-		}
-		if prev != obj {
-			insert(&graph, obj + "|" + attribute, deps...)
-			prev = obj
-			deps = nil
-		}
-		deps = append(deps, settings)
+
+		deps = nil
+		first_pass = true
 
 		notLast = res.Next()
-		if !notLast {
-			insert(&graph, obj + "|" + attribute, deps...)
+
+		for notLast {
+			err := res.Scan(&obj, &attribute, &settings)
+			if err != nil {
+				log.Fatal(err)
+			}
+			if first_pass {
+				prev = obj
+				first_pass = false
+			}
+			if prev != obj {
+				insert(&graph, obj + "|" + attribute, deps...)
+				prev = obj
+				deps = nil
+			}
+			deps = append(deps, settings)
+
+			notLast = res.Next()
+			if !notLast {
+				insert(&graph, obj + "|" + attribute, deps...)
+			}
 		}
 	}
+	
 
 	
 
@@ -419,16 +309,7 @@ func main() {
 	// Everything else
 
 	for _, a := range attrs {
-		q := fmt.Sprintf(`select cast(o.sfname as nvarchar(255)) + '|' + a.afattribute attr from templates t
-		inner join cases c on 1=1 and c.id = %s
-		inner join objects o on o.templatesfid = t.sfid and o.createcaseid <= c.id and (o.deletecaseid is null or o.deletecaseid > c.id)
-		inner join models m on m.sfid = o.modelsfid
-		inner join attrsettings a on a.afelement = o.sfid and a.isdeleted = 0 and
-			(
-				(a.afattribute in ('%s') and not a.afreference in ('Formula','Smart Sum of Transfers','Sum of Transfers','Tank Mass')) or
-				not a.afattribute in ('%s')
-			)
-		where t.name = '%s' and m.name = '%s'`, *caseid, strings.Join(a.Attributes[:], "','"), strings.Join(a.Attributes[:], "','"), a.TemplateName, model)
+		q := GetTheRestQuery(caseid, &a.Attributes, &a.TemplateName, &model)
 		queries = append(queries, q)
 	}
 

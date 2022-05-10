@@ -3,3 +3,5 @@
 CMD flags:
 
 `-caseid` **Required** CaseId
+
+`-measured` **Required** Measured-column
